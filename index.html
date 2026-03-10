@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="si">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SRT Spoken Transformer PRO</title>
+    <style>
+        :root { --primary: #00d2ff; --bg: #0f172a; --card: #1e293b; --text: #f8fafc; }
+        body { font-family: 'Inter', sans-serif; background: var(--bg); color: var(--text); padding: 20px; }
+        .container { max-width: 900px; margin: auto; }
+        .upload-section { border: 2px dashed #334155; padding: 30px; text-align: center; border-radius: 15px; background: var(--card); margin-bottom: 20px; }
+        .chunk-box { background: var(--card); margin-top: 15px; padding: 15px; border-radius: 10px; border-left: 5px solid var(--primary); }
+        .controls { display: flex; gap: 10px; margin-top: 10px; }
+        textarea { width: 100%; height: 100px; background: #000; color: #00ffcc; border: 1px solid #334155; border-radius: 5px; padding: 10px; font-size: 13px; margin-top: 10px; }
+        button { cursor: pointer; border: none; border-radius: 5px; font-weight: bold; transition: 0.2s; padding: 8px 15px; }
+        .btn-copy { background: var(--primary); color: #000; }
+        .btn-done { background: #f59e0b; color: #000; width: 100%; padding: 20px; font-size: 18px; margin-top: 30px; }
+        /* Timelaps පෙන්වීමට */
+        .time-display { font-size: 11px; color: #64748b; font-family: monospace; display: block; margin-bottom: 5px; }
+        pre { background: #111; padding: 10px; border-radius: 5px; font-size: 13px; color: #94a3b8; overflow-x: auto; white-space: pre-wrap; }
+        input[type="file"] { display: none; }
+        .file-label { background: #334155; color: white; padding: 10px 20px; border-radius: 5px; cursor: pointer; }
+        .hidden-prompt { display: none; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2 style="text-align: center;">SRT Spoken Transformer PRO</h2>
+    
+    <div class="upload-section">
+        <label for="srtFile" class="file-label">Select SRT File</label>
+        <input type="file" id="srtFile" accept=".srt">
+        <p id="fileName" style="margin-top:10px;"></p>
+    </div>
+
+    <div id="outputArea"></div>
+    <button id="doneBtn" class="btn-done" style="display:none;" onclick="downloadSRT()">Done & Download Updated SRT</button>
+</div>
+
+<script id="masterPromptTemplate" type="text/plain">
+පහත දැක්වෙන්නේ උපසිරැසි ගොනුවක කොටසකි. කරුණාකර මෙහි ඇති සිංහල වාක්‍ය වඩාත් ස්වාභාවික සිංහල කටවහරට (Spoken Sinhala) හරවා දෙන්න. ඉංග්‍රීසි වාක්‍ය තිබේ නම් ඒවාද සිංහල කටවහරට පරිවර්තනය කරන්න. 
+
+නීති:
+1. වාක්‍යයේ අර්ථය මුල සිට අගට කියවා නිවැරදිව තේරුම් ගෙන ස්වාභාවික ලෙස සකසන්න.
+2. ප්‍රතිදානය (Output) ලෙස ලබා දිය යුත්තේ "අංකය. වාක්‍යය" යන ආකාරයට පමණි. (උදා: 1. මොකද කරන්නේ?)
+3. කිසිදු අමතර විස්තරයක්, "මෙන්න ඔයාගේ පරිවර්තනය" වැනි වාක්‍ය හෝ කේත (codes) ලබා නොදෙන්න.
+4. කාල රාමු (Time codes) ඇතුළත් කරන්න එපා.
+
+මෙන්න පේළි 10:
+</script>
+
+<script>
+let srtData = [];
+
+document.getElementById('srtFile').addEventListener('change', function(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    document.getElementById('fileName').innerText = "Loaded: " + file.name;
+    
+    const reader = new FileReader();
+    reader.onload = function(event) {
+        parseAndDisplay(event.target.result);
+    };
+    reader.readAsText(file);
+});
+
+function parseAndDisplay(content) {
+    const outputArea = document.getElementById('outputArea');
+    outputArea.innerHTML = '';
+    srtData = [];
+
+    // Blocks වලට කඩනවා (පේළි දෙකක හිස්තැනකින්)
+    const blocks = content.trim().split(/\n\s*\n/);
+    
+    let currentChunk = [];
+    let chunkCounter = 1;
+
+    blocks.forEach((block, index) => {
+        const lines = block.split('\n').map(l => l.trim());
+        if(lines.length >= 3) {
+            const id = lines[0];
+            const time = lines[1];
+            const text = lines.slice(2).join(' ');
+            
+            const obj = { id, time, text, updatedText: text };
+            srtData.push(obj);
+            currentChunk.push(obj);
+
+            if (currentChunk.length === 10 || index === blocks.length - 1) {
+                renderChunkUI(currentChunk, chunkCounter++);
+                currentChunk = [];
+            }
+        }
+    });
+    document.getElementById('doneBtn').style.display = 'block';
+}
+
+function renderChunkUI(chunk, chunkIndex) {
+    const masterPrompt = document.getElementById('masterPromptTemplate').innerText;
+    let copyTextOnly = chunk.map(item => `${item.id}. ${item.text}`).join('\n');
+    let finalPrompt = masterPrompt + "\n" + copyTextOnly;
+
+    // Timelaps පෙන්වීම සඳහා preview එකක් හදනවා
+    let previewHtml = chunk.map(item => `
+        <div>
+            <span class="time-display">[${item.id}] ${item.time}</span>
+            <span>${item.text}</span>
+        </div>
+    `).join('<hr style="border:0; border-top:1px solid #334155; margin:5px 0;">');
+
+    const div = document.createElement('div');
+    div.className = 'chunk-box';
+    div.innerHTML = `
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+            <strong>කොටස ${chunkIndex} (වාක්‍ය 10)</strong>
+            <button class="btn-copy" id="btn-copy-${chunkIndex}">Copy for Gemini</button>
+        </div>
+        <div style="margin-top:10px;">
+            <pre>${previewHtml}</pre>
+        </div>
+        <textarea id="input-${chunkIndex}" placeholder="Gemini දුන් සිංහල ටික මෙතනට Paste කරන්න..." oninput="updateChunkData(${chunkIndex}, this.value)"></textarea>
+    `;
+    
+    document.getElementById('outputArea').appendChild(div);
+
+    // Copy function එක manually bind කරනවා errors මගහරින්න
+    document.getElementById(`btn-copy-${chunkIndex}`).onclick = function() {
+        const btn = this;
+        navigator.clipboard.writeText(finalPrompt).then(() => {
+            btn.innerText = "Copied!";
+            btn.style.background = "#10b981";
+            setTimeout(() => {
+                btn.innerText = "Copy for Gemini";
+                btn.style.background = "#00d2ff";
+            }, 2000);
+        }).catch(err => {
+            alert("Copy failed! Please try manually. (Check browser permissions)");
+        });
+    };
+}
+
+function updateChunkData(chunkIdx, val) {
+    const lines = val.split('\n').filter(l => l.trim() !== '');
+    const startIdx = (chunkIdx - 1) * 10;
+    
+    lines.forEach((line, i) => {
+        // අංකය අයින් කර වාක්‍යය පමණක් ගන්නවා
+        const cleanText = line.replace(/^\d+[\.\)\s\-]+/, '').trim();
+        if (srtData[startIdx + i]) {
+            srtData[startIdx + i].updatedText = cleanText;
+        }
+    });
+}
+
+function downloadSRT() {
+    let finalSrt = "";
+    srtData.forEach(item => {
+        finalSrt += `${item.id}\n${item.time}\n${item.updatedText}\n\n`;
+    });
+
+    const blob = new Blob([finalSrt], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = "Fixed_Spoken_Subtitle.srt";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+}
+</script>
+
+</body>
+</html>
